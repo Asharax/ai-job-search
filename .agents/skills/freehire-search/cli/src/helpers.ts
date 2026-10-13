@@ -107,6 +107,7 @@ export interface FreehireJob {
     salary_min?: number
     salary_max?: number
     salary_currency?: string
+    salary_period?: string // e.g. "year", "month"
   }
 }
 
@@ -114,6 +115,10 @@ export interface FreehireJob {
  * A search result in the portal-skill contract shape. `id` is the public_slug
  * (what `detail <slug>` consumes) and `date` is the posting date; missing values
  * are `null`, never omitted. The extra facet fields are a permitted superset.
+ *
+ * `description` is the posting's full text in the format the search asked the API
+ * for — the agent search endpoint hydrates it server-side, so it arrives already
+ * rendered and is passed through verbatim rather than run through `cleanHtml`.
  */
 export interface JobResult {
   id: string
@@ -127,6 +132,7 @@ export interface JobResult {
   regions: string[]
   countries: string[]
   skills: string[]
+  description: string | null
 }
 
 /** A job detail: the search result plus the cleaned description and enrichment. */
@@ -139,11 +145,15 @@ export interface JobDetailResult extends JobResult {
   description: string | null
 }
 
-/** Reshape a freehire job into the contract search-result fields. */
+/**
+ * Reshape a freehire job into the contract search-result fields. The title comes
+ * from the source ATS as indexed, which can carry HTML entities and stray
+ * whitespace ("Intern - Fullstack &amp; AI Innovation "), so it is decoded and trimmed.
+ */
 export function toResult(j: FreehireJob): JobResult {
   return {
     id: j.public_slug,
-    title: j.title || "(untitled)",
+    title: decodeHtmlEntities(j.title || "").trim() || "(untitled)",
     company: j.company || null,
     company_slug: j.company_slug || null,
     location: j.location || null,
@@ -153,6 +163,7 @@ export function toResult(j: FreehireJob): JobResult {
     regions: j.regions,
     countries: j.countries,
     skills: j.skills,
+    description: j.description || null,
   }
 }
 
@@ -170,12 +181,17 @@ export function toDetail(j: FreehireJob): JobDetailResult {
   }
 }
 
-/** Human-readable salary line from the enrichment fields, or null when absent. */
+/**
+ * Human-readable salary line from the enrichment fields, or null when absent.
+ * The period is kept when freehire records one ("INR 300000–300000/year"):
+ * without it a yearly figure is indistinguishable from a monthly one.
+ */
 function formatSalary(e: FreehireJob["enrichment"]): string | null {
   if (e.salary_min == null && e.salary_max == null) return null
   const cur = e.salary_currency ? `${e.salary_currency} ` : ""
-  if (e.salary_min != null && e.salary_max != null) return `${cur}${e.salary_min}–${e.salary_max}`
-  return `${cur}${e.salary_min ?? e.salary_max}`
+  const per = e.salary_period ? `/${e.salary_period}` : ""
+  if (e.salary_min != null && e.salary_max != null) return `${cur}${e.salary_min}–${e.salary_max}${per}`
+  return `${cur}${e.salary_min ?? e.salary_max}${per}`
 }
 
 function numericEntity(cp: number): string {
